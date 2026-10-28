@@ -1,0 +1,176 @@
+# SimplerEnv
+
+Framework for evaluating real-world robot manipulation policies (RT-1, RT-1-X, Octo) in simulation. Replicates common setups like Google Robot and WidowX+Bridge, with GPU-accelerated simulations (10-15x speedup). Offers visual matching and variant aggregation evaluation methods for robust policy assessment.
+
+For more information, see the [official repository](https://github.com/simpler-env/SimplerEnv).
+
+---
+
+# Benchmark results
+
+These values come from the default SimplerEnv evaluation runs (the per-task success rates are listed below).
+
+## Bridge (WidowX robot)
+
+Provided checkpoints:
+- [nvidia/GR00T-N1.6-bridge](https://huggingface.co/nvidia/GR00T-N1.6-bridge)
+- [nvidia/GR00T-N1.7-SimplerEnv-Bridge](https://huggingface.co/nvidia/GR00T-N1.7-SimplerEnv-Bridge)
+
+| Task | N1.6 success rate | N1.7 success rate |
+| --- | ---: | ---: |
+| `widowx_spoon_on_towel` | 56/101 (55.4%) | 78/100 (78.0%) |
+| `widowx_carrot_on_plate` | 46/100 (46.0%) | 58/100 (58.0%) |
+| `widowx_put_eggplant_in_basket` | 89/100 (89.0%) | 53/100 (53.0%) |
+| `widowx_stack_cube` | 5/100 (5.0%) | 48/100 (48.0%) |
+| `widowx_put_eggplant_in_sink` | 33/100 (33.0%) | 2/100 (2.0%) |
+| `widowx_close_drawer` | 73/100 (73.0%) | 97/100 (97.0%) |
+| `widowx_open_drawer` | 95/100 (95.0%) | 100/100 (100.0%) |
+| **Average** | **56.6%** | **62.3%** |
+
+## Fractal (Google Robot)
+
+Provided checkpoints:
+- [nvidia/GR00T-N1.6-fractal](https://huggingface.co/nvidia/GR00T-N1.6-fractal)
+- [nvidia/GR00T-N1.7-SimplerEnv-Fractal](https://huggingface.co/nvidia/GR00T-N1.7-SimplerEnv-Fractal)
+
+| Task | N1.6 success rate | N1.7 success rate |
+| --- | ---: | ---: |
+| `google_robot_pick_coke_can` | 95/100 (95.0%) | 100/100 (100.0%) |
+| `google_robot_pick_object` | 87/100 (87.0%) | 94/100 (94.0%) |
+| `google_robot_move_near` | 81/100 (81.0%) | 100/100 (100.0%) |
+| `google_robot_open_drawer` | 0/100 (0.0%) | 65/100 (65.0%) |
+| `google_robot_close_drawer` | 44/100 (44.0%) | 69/100 (69.0%) |
+| `google_robot_place_in_closed_drawer` | 5/100 (5.0%) | 7/100 (7.0%) |
+| **Average** | **52.0%** | **72.5%** |
+
+# Fine-tune Simpler Env bridge dataset (WidowX robot)
+
+To reproduce our finetune results, use the following commands to setup dataset and launch finetune experiments. Please remember to set `WANDB_API_KEY` since W&B logging is on by default (`USE_WANDB=1` in `examples/finetune.sh`). If you don't have a WANDB account, prepend `USE_WANDB=0` to the launch command to disable it:
+
+```bash
+uv run hf download \
+    --repo-type dataset IPEC-COMMUNITY/bridge_orig_lerobot \
+    --local-dir examples/SimplerEnv/bridge_orig_lerobot/
+
+# Copy the patches and run the finetune script
+cp examples/SimplerEnv/bridge_modality.json examples/SimplerEnv/bridge_orig_lerobot/meta/modality.json
+```
+
+```bash
+NUM_GPUS=8 MAX_STEPS=20000 GLOBAL_BATCH_SIZE=1024 SAVE_STEPS=1000 uv run bash examples/finetune.sh \
+    --base-model-path nvidia/GR00T-N1.7-3B \
+    --dataset-path examples/SimplerEnv/bridge_orig_lerobot/ \
+    --embodiment-tag SIMPLER_ENV_WIDOWX \
+    --output-dir /tmp/bridge_finetune \
+    --state-dropout-prob 0.8
+```
+
+# Fine-tune Simpler Env fractal dataset (Google robot)
+
+```bash
+uv run hf download \
+    --repo-type dataset IPEC-COMMUNITY/fractal20220817_data_lerobot \
+    --local-dir examples/SimplerEnv/fractal20220817_data_lerobot/
+
+# Copy the patches and run the finetune script
+cp -r examples/SimplerEnv/fractal_modality.json examples/SimplerEnv/fractal20220817_data_lerobot/meta/modality.json
+uv run python examples/SimplerEnv/convert_av1_to_h264.py --root examples/SimplerEnv/fractal20220817_data_lerobot --jobs 16
+```
+
+```bash
+NUM_GPUS=8 MAX_STEPS=20000 GLOBAL_BATCH_SIZE=1024 SAVE_STEPS=1000 uv run bash examples/finetune.sh \
+    --base-model-path nvidia/GR00T-N1.7-3B \
+    --dataset-path examples/SimplerEnv/fractal20220817_data_lerobot/ \
+    --embodiment-tag SIMPLER_ENV_GOOGLE \
+    --output-dir /tmp/fractal_finetune \
+    --state-dropout-prob 0.5
+```
+
+# Evaluate checkpoint
+
+First, complete the [one-time simulation environment setup](../../README.md#one-time-simulation-environment-setup), then run this benchmark's setup script (only needed once per benchmark):
+
+```bash
+bash gr00t/eval/sim/SimplerEnv/setup_SimplerEnv.sh
+```
+
+Then, run client server evaluation under the project root directory in separate terminals:
+
+## Fractal (Google Robot) Evaluation
+
+**Terminal 1 - Server:**
+
+You can use either a local finetuned checkpoint path or the remote finetuned checkpoint (provided by us):
+
+**Option 1: Local finetuned checkpoint**
+```bash
+uv run python gr00t/eval/run_gr00t_server.py \
+    --model-path /tmp/fractal_finetune/checkpoint-30000 \
+    --embodiment-tag SIMPLER_ENV_GOOGLE \
+    --use-sim-policy-wrapper
+```
+
+**Option 2: Remote finetuned checkpoint (directly runnable)**
+```bash
+uv run python gr00t/eval/run_gr00t_server.py \
+    --model-path nvidia/GR00T-N1.7-SimplerEnv-Fractal \
+    --embodiment-tag SIMPLER_ENV_GOOGLE \
+    --use-sim-policy-wrapper
+```
+
+**Terminal 2 - Client:**
+```bash
+gr00t/eval/sim/SimplerEnv/simpler_uv/.venv/bin/python gr00t/eval/rollout_policy.py \
+    --n-episodes 10 \
+    --policy-client-host 127.0.0.1 \
+    --policy-client-port 5555 \
+    --max-episode-steps 300 \
+    --env-name simpler_env_google/google_robot_pick_coke_can \
+    --n-action-steps 1 \
+    --n-envs 5
+```
+
+## Bridge (WidowX) Evaluation
+
+**Terminal 1 - Server:**
+
+**Option 1: Local finetuned checkpoint**
+```bash
+uv run python gr00t/eval/run_gr00t_server.py \
+    --model-path /tmp/bridge_finetune/checkpoint-30000 \
+    --embodiment-tag SIMPLER_ENV_WIDOWX \
+    --use-sim-policy-wrapper
+```
+
+**Option 2: Remote finetuned checkpoint (directly runnable)**
+```bash
+uv run python gr00t/eval/run_gr00t_server.py \
+    --model-path nvidia/GR00T-N1.7-SimplerEnv-Bridge \
+    --embodiment-tag SIMPLER_ENV_WIDOWX \
+    --use-sim-policy-wrapper
+```
+
+**Terminal 2 - Client:**
+```bash
+gr00t/eval/sim/SimplerEnv/simpler_uv/.venv/bin/python gr00t/eval/rollout_policy.py \
+    --n-episodes 10 \
+    --policy-client-host 127.0.0.1 \
+    --policy-client-port 5555 \
+    --max-episode-steps 300 \
+    --env-name simpler_env_widowx/widowx_spoon_on_towel \
+    --n-action-steps 4 \
+    --n-envs 5
+```
+
+Other supported tasks are: 
+```
+simpler_env_google/google_robot_pick_object
+simpler_env_google/google_robot_move_near
+simpler_env_google/google_robot_open_drawer
+...
+simpler_env_widowx/widowx_spoon_on_towel
+simpler_env_widowx/widowx_carrot_on_plate
+simpler_env_widowx/widowx_stack_cube
+```
+
+you can replace the env_name with the corresponding tasks listed in the SimplerEnv fork this repo pins at `external_dependencies/SimplerEnv` (see `.gitmodules`).
